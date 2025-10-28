@@ -90,6 +90,14 @@ export interface VerifyResponse {
   isValid: boolean;
   payer?: string;
   invalidReason?: string;
+  amlCheck?: {
+    checked: boolean;
+    riskScore?: number;
+    riskLevel?: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+    sanctioned?: boolean;
+    flags?: string[];
+    requiresManualReview?: boolean;
+  };
 }
 
 export interface SettleResponse {

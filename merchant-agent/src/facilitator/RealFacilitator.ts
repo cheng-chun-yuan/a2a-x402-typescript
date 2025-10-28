@@ -24,6 +24,8 @@ import {
   ExactPaymentPayload,
 } from 'a2a-x402';
 import { ethers } from 'ethers';
+import { AMLModifier } from '../../../x402_a2a/core/modifiers/AMLModifier';
+import { BaseModifier, ModifierContext } from '../../../x402_a2a/core/modifiers/BaseModifier';
 
 // Standard ERC20 ABI for the functions we need
 const ERC20_ABI = [
@@ -37,6 +39,8 @@ const ERC20_ABI = [
 export class RealFacilitator implements FacilitatorClient {
   private provider: ethers.JsonRpcProvider;
   private merchantAccount: ethers.Wallet | null;
+  private modifiers: BaseModifier[];
+  private amlEnabled: boolean;
 
   constructor() {
     // Get RPC URL from environment or use default Base Sepolia RPC
@@ -54,6 +58,30 @@ export class RealFacilitator implements FacilitatorClient {
       this.merchantAccount = null;
       console.warn('⚠️  No MERCHANT_PRIVATE_KEY set - settlement will fail');
     }
+
+    // Initialize modifiers
+    this.modifiers = [];
+    this.amlEnabled = process.env.AML_ENABLED === 'true';
+
+    if (this.amlEnabled) {
+      const riskThreshold = parseInt(process.env.AML_RISK_THRESHOLD || '70', 10);
+      const requireManualReview = process.env.AML_REQUIRE_MANUAL_REVIEW === 'true';
+
+      const amlModifier = new AMLModifier({
+        enabled: true,
+        riskThreshold,
+        requireManualReview,
+        provider: this.provider,
+      });
+
+      this.modifiers.push(amlModifier);
+      console.log(`🔒 AML checks enabled (threshold: ${riskThreshold}, manual review: ${requireManualReview})`);
+    } else {
+      console.log('ℹ️  AML checks disabled');
+    }
+
+    // Sort modifiers by priority
+    this.modifiers.sort((a, b) => a.priority - b.priority);
   }
 
   async verify(
@@ -129,8 +157,57 @@ Amount: ${requirements.maxAmountRequired}
         };
       }
 
-      console.log(`✅ Payment verified successfully. Payer: ${payer}, Balance: ${balance.toString()}`);
-      return { isValid: true, payer: payer };
+      console.log(`✅ Signature and balance verified. Balance: ${balance.toString()}`);
+
+      // --- CUSTOM MODIFIER PIPELINE ---
+      // Run all modifiers AFTER signature/balance verification
+      // This is more efficient - only run AML checks on valid payments
+      console.log(`🔍 Running ${this.modifiers.length} modifier(s)...`);
+
+      const modifierContext: ModifierContext = {
+        payer,
+        payload,
+        requirements,
+        metadata: {},
+      };
+
+      let amlCheckData: any = undefined;
+
+      for (const modifier of this.modifiers) {
+        console.log(`  ▶ Executing ${modifier.name}...`);
+        const result = await modifier.execute(modifierContext);
+
+        // Store AML data if present
+        if (result.metadata?.aml) {
+          amlCheckData = result.metadata.aml;
+        }
+
+        if (!result.allowed) {
+          console.log(`  ❌ ${modifier.name} rejected payment: ${result.reason}`);
+          return {
+            isValid: false,
+            invalidReason: result.reason || `Rejected by ${modifier.name}`,
+            payer,
+            amlCheck: amlCheckData,
+          };
+        }
+
+        console.log(`  ✅ ${modifier.name} passed`);
+        if (result.reason) {
+          console.log(`     ${result.reason}`);
+        }
+
+        // Merge metadata
+        modifierContext.metadata = { ...modifierContext.metadata, ...result.metadata };
+      }
+      // --- END MODIFIER PIPELINE ---
+
+      console.log(`✅ Payment fully verified. Payer: ${payer}`);
+      return {
+        isValid: true,
+        payer: payer,
+        amlCheck: amlCheckData,
+      };
 
     } catch (error) {
       console.error('❌ Verification error:', error);

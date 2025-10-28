@@ -27,7 +27,11 @@ import {
   PaymentStatus,
   x402Utils,
   TaskState,
+  FacilitatorClient,
 } from 'a2a-x402';
+import { RealFacilitator } from './src/facilitator/RealFacilitator';
+import { MockFacilitatorClient } from './src/facilitator/MockFacilitatorClient';
+import { ProductionFacilitatorClient } from './src/facilitator/ProductionFacilitatorClient';
 // Import directly from the compiled files, bypassing package.json exports
 // to avoid path resolution issues in Docker
 const path = require('path');
@@ -95,12 +99,35 @@ class AgentExecutorAdapter {
   }
 }
 
+// Configure facilitator based on environment
+const FACILITATOR_MODE = process.env.FACILITATOR_MODE || 'mock';
+let facilitator: FacilitatorClient | undefined;
+
+switch (FACILITATOR_MODE) {
+  case 'real':
+    facilitator = new RealFacilitator();
+    console.log('🔒 Using RealFacilitator (blockchain + AML checks)');
+    break;
+  case 'http':
+    const facilitatorUrl = process.env.FACILITATOR_URL || 'https://x402.org/facilitator';
+    facilitator = new ProductionFacilitatorClient({
+      url: facilitatorUrl,
+      apiKey: process.env.FACILITATOR_API_KEY,
+    });
+    console.log(`🌐 Using ProductionFacilitatorClient (${facilitatorUrl})`);
+    break;
+  case 'mock':
+  default:
+    facilitator = new MockFacilitatorClient();
+    console.log('🧪 Using MockFacilitatorClient (testing mode)');
+    break;
+}
+
 // Wrap agent with x402 payment executor
 const agentAdapter = new AgentExecutorAdapter();
-const paymentExecutor = new MerchantServerExecutor(agentAdapter as any);
+const paymentExecutor = new MerchantServerExecutor(agentAdapter as any, undefined, facilitator);
 
 console.log('🚀 Starting x402 Merchant Agent Server...');
-console.log(`🌐 Using default facilitator (https://x402.org/facilitator)`);
 
 // Create HTTP server
 const server = createServer(async (req, res) => {

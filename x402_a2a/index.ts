@@ -104,5 +104,25 @@ export {
   x402ClientExecutor,
 } from "./executors";
 
+// ===== AML Compliance & Modifiers =====
+export {
+  BaseModifier,
+  AMLModifier,
+} from "./core/modifiers";
+
+export type {
+  ModifierContext,
+  ModifierResult,
+  AMLModifierConfig,
+} from "./core/modifiers";
+
+export {
+  AMLChecker,
+} from "./core/compliance";
+
+export type {
+  AMLCheckResult,
+} from "./core/compliance";
+
 // ===== Version =====
 export const VERSION = "1.0.0";

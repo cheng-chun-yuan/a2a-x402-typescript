@@ -149,6 +149,26 @@ export abstract class x402ServerExecutor extends x402BaseExecutor {
 
       logger.log(`Verification response: ${JSON.stringify(verifyResponse, null, 2)}`);
 
+      // Log AML check results if present
+      if (verifyResponse.amlCheck) {
+        logger.log(`🔒 AML Check Results:`);
+        logger.log(`   Risk Score: ${verifyResponse.amlCheck.riskScore}`);
+        logger.log(`   Risk Level: ${verifyResponse.amlCheck.riskLevel}`);
+        logger.log(`   Sanctioned: ${verifyResponse.amlCheck.sanctioned}`);
+        if (verifyResponse.amlCheck.flags && verifyResponse.amlCheck.flags.length > 0) {
+          logger.log(`   Flags: ${verifyResponse.amlCheck.flags.join(', ')}`);
+        }
+        if (verifyResponse.amlCheck.requiresManualReview) {
+          logger.warn(`   ⚠️  REQUIRES MANUAL REVIEW`);
+        }
+
+        // Store AML data in task metadata
+        if (!task.metadata) {
+          task.metadata = {};
+        }
+        task.metadata['aml_check'] = verifyResponse.amlCheck;
+      }
+
       if (!verifyResponse.isValid) {
         logger.warn(
           `Payment verification failed: ${verifyResponse.invalidReason}`
