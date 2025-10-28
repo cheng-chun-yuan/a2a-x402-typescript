@@ -66,16 +66,23 @@ export class RealFacilitator implements FacilitatorClient {
     if (this.amlEnabled) {
       const riskThreshold = parseInt(process.env.AML_RISK_THRESHOLD || '70', 10);
       const requireManualReview = process.env.AML_REQUIRE_MANUAL_REVIEW === 'true';
+      const useOracle = process.env.AML_USE_ORACLE !== 'false'; // Default: true
+      const oracleAddress = process.env.AML_ORACLE_ADDRESS; // Optional custom address
 
       const amlModifier = new AMLModifier({
         enabled: true,
         riskThreshold,
         requireManualReview,
         provider: this.provider,
+        useOracle,
+        oracleAddress,
+        fallbackToLocal: true, // Always fallback to local list
       });
 
       this.modifiers.push(amlModifier);
-      console.log(`🔒 AML checks enabled (threshold: ${riskThreshold}, manual review: ${requireManualReview})`);
+
+      const oracleStatus = useOracle ? '✅ Oracle enabled' : '❌ Oracle disabled';
+      console.log(`🔒 AML checks enabled (threshold: ${riskThreshold}, manual review: ${requireManualReview}, ${oracleStatus})`);
     } else {
       console.log('ℹ️  AML checks disabled');
     }

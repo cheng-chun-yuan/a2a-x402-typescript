@@ -16,7 +16,7 @@
  */
 
 import { BaseModifier, ModifierContext, ModifierResult } from './BaseModifier';
-import { AMLChecker, AMLCheckResult } from '../compliance/AMLChecker';
+import { AMLChecker, AMLCheckResult, AMLCheckerConfig } from '../compliance/AMLChecker';
 import { ethers } from 'ethers';
 
 export interface AMLModifierConfig {
@@ -24,6 +24,9 @@ export interface AMLModifierConfig {
   riskThreshold: number; // 0-100
   requireManualReview: boolean; // Flag high-risk for manual review instead of auto-reject
   provider: ethers.JsonRpcProvider;
+  useOracle?: boolean; // Use Chainalysis Oracle (default: true)
+  oracleAddress?: string; // Custom oracle address
+  fallbackToLocal?: boolean; // Fallback to local list if oracle fails (default: true)
 }
 
 export class AMLModifier extends BaseModifier {
@@ -33,7 +36,19 @@ export class AMLModifier extends BaseModifier {
   constructor(config: AMLModifierConfig) {
     super();
     this.config = config;
-    this.amlChecker = new AMLChecker(config.provider, config.riskThreshold);
+
+    // Pass Oracle config to AMLChecker
+    const checkerConfig: AMLCheckerConfig = {
+      useOracle: config.useOracle ?? true,
+      oracleAddress: config.oracleAddress,
+      fallbackToLocal: config.fallbackToLocal ?? true,
+    };
+
+    this.amlChecker = new AMLChecker(
+      config.provider,
+      config.riskThreshold,
+      checkerConfig
+    );
   }
 
   get priority(): number {

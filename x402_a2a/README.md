@@ -1,8 +1,16 @@
-# x402 A2A Payment Protocol Extension (TypeScript)
+# x402 A2A Payment Protocol Extension with AML Compliance
 
-This package provides a complete TypeScript implementation of the x402 payment protocol extension for A2A using an **exception-based approach** for dynamic payment requirements.
+Complete TypeScript implementation of the x402 payment protocol extension for A2A with built-in **Anti-Money Laundering (AML)** compliance checks.
 
-This is the TypeScript port of the Python `x402_a2a` library.
+## Features
+
+- 🚀 Exception-based payment requirements
+- 💰 Dynamic pricing based on request parameters
+- 🔒 Type-safe TypeScript implementation
+- 🛡️ **Built-in AML compliance with Chainalysis Oracle**
+- 📊 Risk scoring and wallet screening
+- 🎯 ADK-compatible executors
+- 📦 Zero configuration required
 
 ## Installation
 
@@ -17,7 +25,7 @@ npm install a2a-x402
 ```typescript
 import { x402PaymentRequiredException } from 'a2a-x402';
 
-// In your agent logic, throw an exception to request payment:
+// Request payment with automatic AML screening
 throw x402PaymentRequiredException.forService({
   price: "$5.00",
   payToAddress: "0x123...",
@@ -34,184 +42,176 @@ import { Wallet } from 'ethers';
 const wallet = new Wallet(privateKey);
 const utils = new x402Utils();
 
-// Get payment requirements from task
 const paymentRequired = utils.getPaymentRequirements(task);
-
-// Sign the payment
-const paymentPayload = await processPayment(
-  paymentRequired.accepts[0],
-  wallet
-);
+const paymentPayload = await processPayment(paymentRequired.accepts[0], wallet);
 ```
 
-### Using the Default Facilitator
+## AML Compliance
 
-The library now includes a default facilitator that connects to `https://x402.org/facilitator` (matching Python behavior):
+### Automatic Wallet Screening
 
-```typescript
-import { verifyPayment, settlePayment } from 'a2a-x402';
+The library includes **free, built-in AML checks** using:
 
-// Uses default facilitator automatically
-const verifyResult = await verifyPayment(paymentPayload, requirements);
-const settleResult = await settlePayment(paymentPayload, requirements);
+1. **Chainalysis Oracle** (Ethereum Mainnet) - Real-time sanctions screening
+2. **On-chain Analysis** - Transaction history, wallet age, balance checks
+3. **Local Sanctions List** - Fallback for offline checks
+
+### Risk Scoring
+
+Each wallet receives a risk score (0-100):
+
+- **0-39**: LOW risk ✅
+- **40-69**: MEDIUM risk ⚠️
+- **70-89**: HIGH risk 🚨
+- **90-100**: CRITICAL risk 🔴
+
+### Configuration
+
+```env
+# Enable/disable AML checks
+AML_ENABLED=true
+
+# Risk threshold (payments above this require manual review)
+AML_RISK_THRESHOLD=70
+
+# Require manual review for high-risk wallets
+AML_REQUIRE_MANUAL_REVIEW=true
+
+# Use Chainalysis Oracle (Ethereum mainnet)
+AML_USE_ORACLE=true
 ```
 
-To use a custom facilitator:
+### How It Works
 
 ```typescript
-import { DefaultFacilitatorClient } from 'a2a-x402';
+import { AMLChecker, AMLModifier } from 'a2a-x402';
+import { ethers } from 'ethers';
 
-// Custom facilitator URL
-const facilitator = new DefaultFacilitatorClient({
-  url: 'https://your-facilitator.com',
-  apiKey: 'optional-api-key'
+const provider = new ethers.JsonRpcProvider(process.env.RPC_URL);
+const amlChecker = new AMLChecker(provider, 70, { useOracle: true });
+
+// Check a wallet address
+const result = await amlChecker.checkAddress('0x...');
+
+console.log(result);
+// {
+//   address: '0x...',
+//   riskScore: 45,
+//   riskLevel: 'MEDIUM',
+//   sanctioned: false,
+//   flags: ['New wallet (< 10 transactions)'],
+//   metadata: {
+//     walletAge: 2,
+//     transactionCount: 8,
+//     isContract: false
+//   }
+// }
+```
+
+### Sanctions Sources
+
+The AML system checks against:
+
+1. **Chainalysis Oracle** (`0x40C57923924B5c5c5455c48D93317139ADDaC8fb` on Ethereum Mainnet)
+   - Real-time OFAC sanctions list
+   - Automatically updated
+   - Free to use
+
+2. **Local Sanctions List** (`core/compliance/sanctions-list.json`)
+   - Fallback when Oracle is unavailable
+   - Includes known sanctioned addresses (Tornado Cash, Lazarus Group, etc.)
+   - Can be manually updated
+
+## Custom Facilitators with AML
+
+Extend the payment facilitator with custom AML policies:
+
+```typescript
+import { AMLModifier, BaseModifier } from 'a2a-x402';
+
+// Initialize AML modifier
+const amlModifier = new AMLModifier({
+  enabled: true,
+  riskThreshold: 70,
+  requireManualReview: true,
+  provider: ethersProvider,
+  useOracle: true,
+  fallbackToLocal: true,
 });
 
-const verifyResult = await verifyPayment(paymentPayload, requirements, facilitator);
+// Add to your facilitator's modifier pipeline
+facilitator.addModifier(amlModifier);
 ```
 
 ## Architecture
 
-The package follows a "functional core, imperative shell" architecture:
-
-- **types/**: Protocol data structures (config, errors, state)
-- **core/**: Protocol implementation (merchant, wallet, protocol, utils)
-- **executors/**: Optional middleware for common integration patterns
-
-## Features
-
-- 🚀 Exception-based payment requirements
-- 💰 Dynamic pricing based on request parameters
-- 🔒 Type-safe TypeScript implementation
-- 🎯 ADK-compatible executors
-- 📦 Zero configuration required
-- 🌐 Default facilitator client (https://x402.org/facilitator)
-
-## Advanced: Implementing Custom Facilitators
-
-The library defines a `FacilitatorClient` interface that you can implement for custom payment processing:
-
-```typescript
-import {
-  FacilitatorClient,
-  PaymentPayload,
-  PaymentRequirements,
-  VerifyResponse,
-  SettleResponse
-} from 'a2a-x402';
-
-export class MyCustomFacilitator implements FacilitatorClient {
-  async verify(
-    payload: PaymentPayload,
-    requirements: PaymentRequirements
-  ): Promise<VerifyResponse> {
-    // Your verification logic here
-    // - Validate signatures
-    // - Check balances
-    // - Verify authorization
-
-    return {
-      isValid: true,
-      payer: '0x...',
-    };
-  }
-
-  async settle(
-    payload: PaymentPayload,
-    requirements: PaymentRequirements
-  ): Promise<SettleResponse> {
-    // Your settlement logic here
-    // - Execute blockchain transaction
-    // - Transfer tokens
-    // - Update records
-
-    return {
-      success: true,
-      transaction: '0x...',
-      network: requirements.network,
-      payer: '0x...',
-    };
-  }
-}
+```
+x402_a2a/
+├── core/
+│   ├── compliance/          # AML compliance engine
+│   │   ├── AMLChecker.ts   # Risk scoring and Oracle integration
+│   │   └── sanctions-list.json
+│   ├── modifiers/           # Extensible verification pipeline
+│   │   ├── BaseModifier.ts # Modifier interface
+│   │   └── AMLModifier.ts  # AML integration
+│   ├── merchant.ts          # Payment requirements
+│   ├── wallet.ts            # Payment signing
+│   └── protocol.ts          # Verification & settlement
+├── types/                   # TypeScript definitions
+└── executors/               # ADK middleware
 ```
 
-### Using Custom Facilitators with Executors
+## Verification Flow
 
-When implementing a merchant agent with the `x402ServerExecutor`, you can provide your custom facilitator:
-
-```typescript
-import { x402ServerExecutor, verifyPayment, settlePayment } from 'a2a-x402';
-
-export class MerchantServerExecutor extends x402ServerExecutor {
-  private facilitator?: FacilitatorClient;
-
-  constructor(delegate: AgentExecutor, config?: x402ExtensionConfig, facilitator?: FacilitatorClient) {
-    super(delegate, config);
-    this.facilitator = facilitator;
-  }
-
-  async verifyPayment(payload: PaymentPayload, requirements: PaymentRequirements) {
-    // Uses custom facilitator if provided, otherwise uses default
-    return verifyPayment(payload, requirements, this.facilitator);
-  }
-
-  async settlePayment(payload: PaymentPayload, requirements: PaymentRequirements) {
-    return settlePayment(payload, requirements, this.facilitator);
-  }
-}
+```
+1. Client submits payment
+   ↓
+2. Extract payer address from signature
+   ↓
+3. Verify signature validity
+   ↓
+4. Check wallet balance
+   ↓
+5. Run AML checks (Modifiers)
+   ├── Check Chainalysis Oracle (Ethereum mainnet)
+   ├── Analyze on-chain behavior
+   ├── Calculate risk score
+   └── Apply business rules
+   ↓
+6. Approve or reject payment
 ```
 
-### Example: Mock Facilitator for Testing
+## Environment Variables
 
-```typescript
-export class MockFacilitatorClient implements FacilitatorClient {
-  async verify(payload: PaymentPayload, requirements: PaymentRequirements): Promise<VerifyResponse> {
-    console.log('Mock: Payment verification always succeeds');
-    return {
-      isValid: true,
-      payer: payload.payload.authorization.from,
-    };
-  }
+```env
+# Blockchain
+RPC_URL=https://base-sepolia.g.alchemy.com/v2/YOUR_KEY
+PRIVATE_KEY=0x...
+MERCHANT_WALLET=0x...
 
-  async settle(payload: PaymentPayload, requirements: PaymentRequirements): Promise<SettleResponse> {
-    const mockTxHash = `0x${Math.random().toString(16).substring(2, 66)}`;
-    console.log(`Mock: Generated fake transaction ${mockTxHash}`);
+# AML Compliance
+AML_ENABLED=true
+AML_RISK_THRESHOLD=70
+AML_REQUIRE_MANUAL_REVIEW=true
+AML_USE_ORACLE=true
 
-    return {
-      success: true,
-      transaction: mockTxHash,
-      network: requirements.network,
-      payer: payload.payload.authorization.from,
-    };
-  }
-}
-```
+# Facilitator Mode
+FACILITATOR_MODE=real  # or 'mock' for testing
 
-## Configuration
-
-### Debug Logging
-
-The library includes a configurable logger that can be controlled via environment variable:
-
-```bash
-# Enable detailed x402 protocol logs
-X402_DEBUG=true npm run dev
-
-# Or in your .env file
+# Debug
 X402_DEBUG=true
 ```
 
-When enabled, you'll see detailed logs for:
-- Payment requirement creation
-- Payment verification steps
-- Settlement processing
-- Payment status transitions
+## Testing
 
-**Note:** Error logs are always shown regardless of the `X402_DEBUG` setting.
+```bash
+# Run with AML checks enabled
+bun run dev
 
-## Documentation
-
-See the [main README](../../../python/x402_a2a/README.md) for detailed protocol documentation.
+# Test AML flow
+cd merchant-agent
+bun test-aml-flow.ts
+```
 
 ## License
 

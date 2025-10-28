@@ -34,20 +34,79 @@ export interface AMLCheckResult {
   };
 }
 
+// Chainalysis Oracle ABI
+const CHAINALYSIS_ORACLE_ABI = [
+  'function isSanctioned(address addr) external view returns (bool)'
+];
+
+// Chainalysis Oracle - Only use Ethereum Mainnet
+// Oracle address: 0x40C57923924B5c5c5455c48D93317139ADDaC8fb
+// For all other networks, system will fall back to local sanctions list
+const ETHEREUM_MAINNET_ORACLE = '0x40C57923924B5c5c5455c48D93317139ADDaC8fb';
+
+export interface AMLCheckerConfig {
+  useOracle?: boolean; // Use Chainalysis Oracle for real-time checks
+  oracleAddress?: string; // Custom oracle address
+  fallbackToLocal?: boolean; // Fall back to local list if oracle fails
+}
+
 export class AMLChecker {
   private provider: ethers.JsonRpcProvider;
   private sanctionedAddresses: Set<string>;
   private riskThreshold: number;
+  private config: AMLCheckerConfig;
+  private oracleContract?: ethers.Contract;
 
-  constructor(provider: ethers.JsonRpcProvider, riskThreshold: number = 70) {
+  constructor(
+    provider: ethers.JsonRpcProvider,
+    riskThreshold: number = 70,
+    config: AMLCheckerConfig = {}
+  ) {
     this.provider = provider;
     this.riskThreshold = riskThreshold;
     this.sanctionedAddresses = new Set();
+    this.config = {
+      useOracle: config.useOracle ?? true, // Default to using oracle
+      fallbackToLocal: config.fallbackToLocal ?? true,
+      ...config,
+    };
+
+    // Load local sanctions list
     this.loadSanctionsList();
+
+    // Initialize Chainalysis Oracle if enabled
+    if (this.config.useOracle) {
+      this.initializeOracle();
+    }
   }
 
   /**
-   * Load sanctioned addresses from local JSON file
+   * Initialize Chainalysis Oracle contract
+   * Uses Ethereum Mainnet Oracle only (cross-chain compatible)
+   */
+  private initializeOracle(): void {
+    try {
+      // Always use Ethereum Mainnet Oracle address
+      const oracleAddress = this.config.oracleAddress || ETHEREUM_MAINNET_ORACLE;
+
+      this.oracleContract = new ethers.Contract(
+        oracleAddress,
+        CHAINALYSIS_ORACLE_ABI,
+        this.provider
+      );
+
+      console.log(`🔗 Chainalysis Oracle (Ethereum Mainnet): ${oracleAddress}`);
+    } catch (error) {
+      console.warn('⚠️  Could not initialize Chainalysis Oracle:', error);
+      console.log('   Falling back to local sanctions list');
+      if (!this.config.fallbackToLocal) {
+        throw new Error('Oracle initialization failed and fallback disabled');
+      }
+    }
+  }
+
+  /**
+   * Load sanctioned addresses from local JSON file (fallback)
    */
   private loadSanctionsList(): void {
     try {
@@ -59,17 +118,41 @@ export class AMLChecker {
         this.sanctionedAddresses.add(addr.toLowerCase());
       });
 
-      console.log(`📋 Loaded ${this.sanctionedAddresses.size} sanctioned addresses`);
+      console.log(`📋 Loaded ${this.sanctionedAddresses.size} sanctioned addresses (local)`);
     } catch (error) {
-      console.warn('⚠️  Could not load sanctions list:', error);
+      console.warn('⚠️  Could not load local sanctions list:', error);
     }
   }
 
   /**
-   * Check if address is on sanctions list
+   * Check if address is sanctioned (Oracle + local fallback)
    */
-  private isSanctioned(address: string): boolean {
-    return this.sanctionedAddresses.has(address.toLowerCase());
+  private async isSanctioned(address: string): Promise<boolean> {
+    // Try Chainalysis Oracle first
+    if (this.oracleContract) {
+      try {
+        const sanctioned = await this.oracleContract.isSanctioned(address);
+        if (sanctioned) {
+          console.log(`🚨 Address flagged by Chainalysis Oracle: ${address}`);
+          // Cache in local set for faster future checks
+          this.sanctionedAddresses.add(address.toLowerCase());
+        }
+        return sanctioned;
+      } catch (error) {
+        console.warn(`⚠️  Oracle check failed for ${address}:`, error);
+        if (!this.config.fallbackToLocal) {
+          throw error;
+        }
+        // Fall through to local check
+      }
+    }
+
+    // Fallback to local sanctions list
+    const isLocalSanctioned = this.sanctionedAddresses.has(address.toLowerCase());
+    if (isLocalSanctioned) {
+      console.log(`🚨 Address found in local sanctions list: ${address}`);
+    }
+    return isLocalSanctioned;
   }
 
   /**
@@ -206,8 +289,8 @@ export class AMLChecker {
       throw new Error(`Invalid Ethereum address: ${address}`);
     }
 
-    // Check sanctions list
-    const sanctioned = this.isSanctioned(address);
+    // Check sanctions list (async now due to Oracle)
+    const sanctioned = await this.isSanctioned(address);
     const flags: string[] = [];
 
     if (sanctioned) {
