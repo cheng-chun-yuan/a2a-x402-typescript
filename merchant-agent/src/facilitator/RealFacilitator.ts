@@ -81,10 +81,9 @@ export class RealFacilitator implements FacilitatorClient {
 
       this.modifiers.push(amlModifier);
 
-      const oracleStatus = useOracle ? '✅ Oracle enabled' : '❌ Oracle disabled';
-      console.log(`🔒 AML checks enabled (threshold: ${riskThreshold}, manual review: ${requireManualReview}, ${oracleStatus})`);
+      console.log(`🔒 AML enabled (threshold: ${riskThreshold}${useOracle ? ', Oracle: ON' : ''})`);
     } else {
-      console.log('ℹ️  AML checks disabled');
+      console.log('ℹ️  AML disabled');
     }
 
     // Sort modifiers by priority
@@ -95,8 +94,7 @@ export class RealFacilitator implements FacilitatorClient {
     payload: PaymentPayload,
     requirements: PaymentRequirements
   ): Promise<VerifyResponse> {
-    console.log('--- REAL FACILITATOR: VERIFY ---');
-    console.log(`Received payload:\n${JSON.stringify(payload, null, 2)}`);
+    console.log('\n🔍 Payment Verification Started');
 
     try {
       let payer: string | undefined;
@@ -157,19 +155,20 @@ Amount: ${requirements.maxAmountRequired}
       const requiredAmount = BigInt(requirements.maxAmountRequired);
 
       if (balance < requiredAmount) {
+        console.log(`❌ Insufficient balance`);
         return {
           isValid: false,
-          invalidReason: `Insufficient balance. Has ${balance.toString()}, needs ${requiredAmount.toString()}`,
+          invalidReason: `Insufficient balance`,
           payer: payer,
         };
       }
 
-      console.log(`✅ Signature and balance verified. Balance: ${balance.toString()}`);
+      console.log(`✅ Signature verified`);
+      console.log(`✅ Balance checked`);
 
       // --- CUSTOM MODIFIER PIPELINE ---
       // Run all modifiers AFTER signature/balance verification
       // This is more efficient - only run AML checks on valid payments
-      console.log(`🔍 Running ${this.modifiers.length} modifier(s)...`);
 
       const modifierContext: ModifierContext = {
         payer,
@@ -181,7 +180,6 @@ Amount: ${requirements.maxAmountRequired}
       let amlCheckData: any = undefined;
 
       for (const modifier of this.modifiers) {
-        console.log(`  ▶ Executing ${modifier.name}...`);
         const result = await modifier.execute(modifierContext);
 
         // Store AML data if present
@@ -190,7 +188,6 @@ Amount: ${requirements.maxAmountRequired}
         }
 
         if (!result.allowed) {
-          console.log(`  ❌ ${modifier.name} rejected payment: ${result.reason}`);
           return {
             isValid: false,
             invalidReason: result.reason || `Rejected by ${modifier.name}`,
@@ -199,17 +196,12 @@ Amount: ${requirements.maxAmountRequired}
           };
         }
 
-        console.log(`  ✅ ${modifier.name} passed`);
-        if (result.reason) {
-          console.log(`     ${result.reason}`);
-        }
-
         // Merge metadata
         modifierContext.metadata = { ...modifierContext.metadata, ...result.metadata };
       }
       // --- END MODIFIER PIPELINE ---
 
-      console.log(`✅ Payment fully verified. Payer: ${payer}`);
+      console.log(`\n✅ Payment Verified (${payer.slice(0, 6)}...${payer.slice(-4)})\n`);
       return {
         isValid: true,
         payer: payer,
@@ -230,7 +222,7 @@ Amount: ${requirements.maxAmountRequired}
     payload: PaymentPayload,
     requirements: PaymentRequirements
   ): Promise<SettleResponse> {
-    console.log('--- REAL FACILITATOR: SETTLE ---');
+    console.log('\n💳 Settlement Started');
 
     if (!this.merchantAccount) {
       return {
@@ -266,7 +258,7 @@ Amount: ${requirements.maxAmountRequired}
 
       const amount = BigInt(requirements.maxAmountRequired);
 
-      console.log(`📤 Executing transferFrom: ${payer} -> ${requirements.payTo}, amount: ${amount.toString()}`);
+      console.log(`   Transferring tokens...`);
 
       // Build the transferFrom transaction
       // Note: This assumes the payer has approved the merchant to spend tokens
@@ -279,14 +271,14 @@ Amount: ${requirements.maxAmountRequired}
         }
       );
 
-      console.log(`⏳ Transaction sent: ${tx.hash}`);
-      console.log('   Waiting for confirmation...');
+      console.log(`   Waiting for confirmation...`);
 
       // Wait for transaction receipt
       const receipt = await tx.wait();
 
       if (receipt && receipt.status === 1) {
-        console.log(`✅ Settlement successful. TX: ${tx.hash}`);
+        console.log(`\n✅ Settlement Complete`);
+        console.log(`   TX: ${tx.hash.slice(0, 10)}...${tx.hash.slice(-8)}\n`);
         return {
           success: true,
           transaction: tx.hash,
@@ -294,12 +286,11 @@ Amount: ${requirements.maxAmountRequired}
           payer: payer,
         };
       } else {
-        const errorMsg = `Transaction failed. TX: ${tx.hash}`;
-        console.error(`❌ ${errorMsg}`);
+        console.error(`❌ Settlement failed\n`);
         return {
           success: false,
           network: requirements.network,
-          errorReason: errorMsg,
+          errorReason: `Transaction failed`,
         };
       }
 

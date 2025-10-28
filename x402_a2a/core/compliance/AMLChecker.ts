@@ -95,10 +95,9 @@ export class AMLChecker {
         this.provider
       );
 
-      console.log(`🔗 Chainalysis Oracle (Ethereum Mainnet): ${oracleAddress}`);
+      console.log(`🔗 AML: Chainalysis Oracle initialized (Ethereum Mainnet)`);
     } catch (error) {
-      console.warn('⚠️  Could not initialize Chainalysis Oracle:', error);
-      console.log('   Falling back to local sanctions list');
+      console.warn('⚠️  AML: Oracle initialization failed, using local sanctions list');
       if (!this.config.fallbackToLocal) {
         throw new Error('Oracle initialization failed and fallback disabled');
       }
@@ -118,41 +117,44 @@ export class AMLChecker {
         this.sanctionedAddresses.add(addr.toLowerCase());
       });
 
-      console.log(`📋 Loaded ${this.sanctionedAddresses.size} sanctioned addresses (local)`);
+      // Only log if addresses were loaded
+      if (this.sanctionedAddresses.size > 0) {
+        console.log(`📋 AML: Loaded ${this.sanctionedAddresses.size} custom sanctioned addresses`);
+      }
     } catch (error) {
-      console.warn('⚠️  Could not load local sanctions list:', error);
+      // Silent - local list is optional
     }
   }
 
   /**
-   * Check if address is sanctioned (Oracle + local fallback)
+   * Check if address is sanctioned (Oracle + local list)
    */
   private async isSanctioned(address: string): Promise<boolean> {
-    // Try Chainalysis Oracle first
+    let oracleSanctioned = false;
+
+    // Check Chainalysis Oracle (Ethereum mainnet sanctions)
     if (this.oracleContract) {
       try {
-        const sanctioned = await this.oracleContract.isSanctioned(address);
-        if (sanctioned) {
-          console.log(`🚨 Address flagged by Chainalysis Oracle: ${address}`);
+        oracleSanctioned = await this.oracleContract.isSanctioned(address);
+        if (oracleSanctioned) {
           // Cache in local set for faster future checks
           this.sanctionedAddresses.add(address.toLowerCase());
+          return true; // Sanctioned by Oracle
         }
-        return sanctioned;
       } catch (error) {
-        console.warn(`⚠️  Oracle check failed for ${address}:`, error);
+        // If Oracle fails and fallback disabled, throw error
         if (!this.config.fallbackToLocal) {
           throw error;
         }
-        // Fall through to local check
+        // Otherwise continue to check local list
       }
     }
 
-    // Fallback to local sanctions list
+    // Check local custom sanctions list
     const isLocalSanctioned = this.sanctionedAddresses.has(address.toLowerCase());
-    if (isLocalSanctioned) {
-      console.log(`🚨 Address found in local sanctions list: ${address}`);
-    }
-    return isLocalSanctioned;
+
+    // Return true if EITHER Oracle OR local list flags the address
+    return oracleSanctioned || isLocalSanctioned;
   }
 
   /**
@@ -172,7 +174,7 @@ export class AMLChecker {
       const isContract = code !== '0x';
 
       if (isContract) {
-        riskFactors.push('Contract address (not EOA)');
+        riskFactors.push('Contract address');
       }
 
       // Get transaction count
@@ -183,14 +185,11 @@ export class AMLChecker {
 
       if (transactionCount > 0) {
         try {
-          // Get current block for age estimation
-          const currentBlock = await this.provider.getBlockNumber();
           const balance = await this.provider.getBalance(address);
 
-          // Heuristic: estimate age based on nonce
           // New wallets (< 10 tx) are higher risk
           if (transactionCount < 10) {
-            riskFactors.push('New wallet (< 10 transactions)');
+            riskFactors.push('New wallet');
           }
 
           // Empty or very low balance is suspicious
@@ -198,14 +197,13 @@ export class AMLChecker {
             riskFactors.push('Zero balance');
           }
 
-          // Estimate age in days (rough estimate: 1 block = 12 seconds on Ethereum)
-          // This is a simplified heuristic
-          walletAge = Math.floor(transactionCount / 10); // Rough estimate
+          // Estimate age in days (rough estimate)
+          walletAge = Math.floor(transactionCount / 10);
         } catch (err) {
-          console.warn('Could not analyze transaction history:', err);
+          // Silent fail - not critical
         }
       } else {
-        riskFactors.push('No transaction history');
+        riskFactors.push('No transactions');
       }
 
       return {
@@ -215,7 +213,6 @@ export class AMLChecker {
         riskFactors,
       };
     } catch (error) {
-      console.error('Error analyzing on-chain behavior:', error);
       return {
         walletAge: 0,
         transactionCount: 0,
@@ -282,8 +279,6 @@ export class AMLChecker {
    * Perform comprehensive AML check on an address
    */
   async checkAddress(address: string): Promise<AMLCheckResult> {
-    console.log(`🔍 Running AML check for address: ${address}`);
-
     // Validate address
     if (!ethers.isAddress(address)) {
       throw new Error(`Invalid Ethereum address: ${address}`);
@@ -294,7 +289,7 @@ export class AMLChecker {
     const flags: string[] = [];
 
     if (sanctioned) {
-      flags.push('SANCTIONED - Address on OFAC/sanctions list');
+      flags.push('SANCTIONED');
     }
 
     // Analyze on-chain behavior
@@ -318,11 +313,6 @@ export class AMLChecker {
         hasTokens: onChainData.transactionCount > 0,
       },
     };
-
-    console.log(`✅ AML Check Result: ${riskLevel} (Score: ${riskScore})`);
-    if (flags.length > 0) {
-      console.log(`   Flags: ${flags.join(', ')}`);
-    }
 
     return result;
   }

@@ -95,11 +95,26 @@ export class AMLModifier extends BaseModifier {
         },
       };
 
+      // Format risk level with emoji
+      const riskEmoji = {
+        'LOW': '✅',
+        'MEDIUM': '⚠️',
+        'HIGH': '🚨',
+        'CRITICAL': '🔴'
+      }[result.riskLevel] || '❓';
+
+      // Log AML result
+      console.log(`   ${riskEmoji} AML: ${result.riskLevel} risk (score: ${result.riskScore}/100)`);
+      if (result.flags.length > 0) {
+        console.log(`      Flags: ${result.flags.join(', ')}`);
+      }
+
       // Handle sanctioned addresses (always reject)
       if (result.sanctioned) {
+        console.log(`   🚫 AML: REJECTED - Address is sanctioned`);
         return {
           allowed: false,
-          reason: `Payment rejected: Address is sanctioned. ${result.flags.join('; ')}`,
+          reason: `SANCTIONED address`,
           metadata,
         };
       }
@@ -108,9 +123,10 @@ export class AMLModifier extends BaseModifier {
       if (!allowed) {
         // If manual review enabled, flag but don't auto-reject
         if (this.config.requireManualReview && result.riskLevel === 'HIGH') {
+          console.log(`   ⚠️  AML: PASSED (flagged for manual review)`);
           return {
             allowed: true, // Allow but flag for review
-            reason: `⚠️  HIGH RISK - Flagged for manual review (Score: ${result.riskScore})`,
+            reason: `HIGH RISK - Requires manual review`,
             metadata: {
               ...metadata,
               requiresManualReview: true,
@@ -119,25 +135,27 @@ export class AMLModifier extends BaseModifier {
         }
 
         // Otherwise reject
+        console.log(`   🚫 AML: REJECTED - Risk score ${result.riskScore} > threshold ${this.config.riskThreshold}`);
         return {
           allowed: false,
-          reason: `Payment rejected: Risk score ${result.riskScore} exceeds threshold ${this.config.riskThreshold}. Flags: ${result.flags.join('; ')}`,
+          reason: `Risk score too high (${result.riskScore}/${this.config.riskThreshold})`,
           metadata,
         };
       }
 
       // Address passed AML checks
+      console.log(`   ✅ AML: PASSED`);
       return {
         allowed: true,
         metadata,
       };
     } catch (error) {
-      console.error('AML check failed:', error);
+      console.error(`   ❌ AML: ERROR - ${error instanceof Error ? error.message : String(error)}`);
 
       // Fail safe: reject on error to prevent bypassing checks
       return {
         allowed: false,
-        reason: `AML check failed: ${error instanceof Error ? error.message : String(error)}`,
+        reason: `AML check error`,
         metadata: {
           aml: {
             checked: false,
